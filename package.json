@@ -8,12 +8,27 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@chakra-ui/react": "^1.7.4",
+    "@emotion/react": "^11",
+    "@emotion/styled": "^11",
+    "ethers": "^5.5.3",
+    "framer-motion": "^5",
     "next": "12.0.8",
     "react": "17.0.2",
     "react-dom": "17.0.2"
   },
   "devDependencies": {
+    "@defi-wonderland/smock": "^2.0.7",
+    "@nomiclabs/hardhat-ethers": "^2.0.4",
+    "@nomiclabs/hardhat-etherscan": "^3.0.0",
+    "@nomiclabs/hardhat-waffle": "^2.0.1",
+    "@openzeppelin/contracts": "^4.4.2",
+    "chai": "^4.3.4",
+    "dotenv": "^11.0.0",
     "eslint": "8.6.0",
-    "eslint-config-next": "12.0.8"
+    "eslint-config-next": "12.0.8",
+    "eslint-plugin-node": "^11.1.0",
+    "ethereum-waffle": "^3.4.0",
+    "hardhat": "^2.8.2"
   }
 }
