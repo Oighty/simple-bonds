@@ -4,12 +4,13 @@ const { smock } = require('@defi-wonderland/smock');
 
 const { round } = require("lodash");
 
+// Updates needed to conform to new interface
 describe.only("Bond Depository", async () => {
     const LARGE_APPROVAL = "100000000000000000000000000000000";
     const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
-    // Initial mint for Frax, OHM and DAI (10,000,000)
-    const initialMint = "10000000000000000000000000";
-    const initialOHM = "10000000000000000";
+    // Initial mint for tokens (10,000,000) - 18 decimals
+    const initialQuoteMint = "10000000000000000000000000";
+    const initialBaseMint = "10000000000000000000000000";
     const initialDeposit = "1000000000000000000000000";
 
     const mineBlock = async () => {
@@ -28,22 +29,16 @@ describe.only("Bond Depository", async () => {
     }
 
 
-    let deployer, alice, bob, carol;
+    let deployer, alice, bob, carol, treasury;
     let erc20Factory;
-    let authFactory;
     let depositoryFactory;
 
-    let auth;
-    let dai;
-    let ohm;
+    let quoteToken;
+    let baseToken;
     let depository;
-    let treasury;
-    let gOHM;
-    let staking;
-    let sOHM;
 
-    let capacity = 10000e9;
-    let initialPrice = 400e9;
+    let capacity = 10000e18; // Assumes 18 decimal base token
+    let initialPrice = 400e18;
     let buffer = 2e5;
 
     let vesting = 100;
@@ -63,54 +58,40 @@ describe.only("Bond Depository", async () => {
      * This is the home for setup methods
      */
     before(async () => {
-        [deployer, alice, bob, carol] = await ethers.getSigners();
+        [deployer, alice, bob, carol, treasury] = await ethers.getSigners();
 
         erc20Factory = await smock.mock("MockERC20");
-
         depositoryFactory = await ethers.getContractFactory("BondDepository");
     });
 
     beforeEach(async () => {
-        dai = await erc20Factory.deploy("Dai", "DAI", 18);
-
-        auth = await authFactory.deploy(
-            deployer.address,
-            deployer.address,
-            deployer.address,
-            deployer.address
-        ); 
-        ohm = await erc20Factory.deploy("Olympus", "OHM", 9);
-        treasury = await smock.fake("ITreasury");
-        gOHM = await gOhmFactory.deploy("50000000000"); // Set index as 50
-        staking = await smock.fake("IStaking");
-        depository = await depositoryFactory.deploy(auth.address, ohm.address, gOHM.address, staking.address, treasury.address);
+        quoteToken = await erc20Factory.deploy("Quote Token", "QT", 18);
+        baseToken = await erc20Factory.deploy("Base Token", "BT", 18);
+        depository = await depositoryFactory.deploy(
+            baseToken.address,
+            treasury.address
+        );
         
         // Setup for each component
-        await dai.mint(bob.address, initialMint);
+        await quoteToken.mint(bob.address, initialQuoteMint);
 
-        // To get past OHM contract guards
-        await auth.pushVault(treasury.address, true);
+        await quoteToken.mint(deployer.address, initialDeposit);
+        await quoteToken.approve(treasury.address, initialDeposit);
+        
+        await baseToken.mint(deployer.address, initialBaseMint);
+        // await treasury.baseSupply.returns(await baseToken.totalSupply());
 
-        await dai.mint(deployer.address, initialDeposit);
-        await dai.approve(treasury.address, initialDeposit);
-        //await treasury.deposit(initialDeposit, dai.address, "10000000000000");
-        await ohm.mint(deployer.address, "10000000000000")
-        await treasury.baseSupply.returns(await ohm.totalSupply());
+        // Mint enough baseToken to payout rewards
+        await baseToken.mint(depository.address, "10000000000000000000000")
 
-        // Mint enough gOHM to payout rewards
-        await gOHM.mint(depository.address, "1000000000000000000000")
+        await baseToken.connect(alice).approve(depository.address, LARGE_APPROVAL);
+        await quoteToken.connect(bob).approve(depository.address, LARGE_APPROVAL);
 
-        await ohm.connect(alice).approve(depository.address, LARGE_APPROVAL);
-        await dai.connect(bob).approve(depository.address, LARGE_APPROVAL);
-
-        await depository.setRewards(refReward, daoReward);
-        await depository.whitelist(carol.address);
-
-        await dai.connect(alice).approve(depository.address, capacity);
+        await quoteToken.connect(alice).approve(depository.address, capacity);
 
         // create the first bond
         await depository.create(
-            dai.address,
+            quoteToken.address,
             [capacity, initialPrice, buffer],
             [false, true],
             [vesting, conclusion],
@@ -144,7 +125,7 @@ describe.only("Bond Depository", async () => {
     it("should return IDs of all markets", async () => {
         // create a second bond
         await depository.create(
-            dai.address,
+            quoteToken.address,
             [capacity, initialPrice, buffer],
             [false, true],
             [vesting, conclusion],
@@ -158,7 +139,7 @@ describe.only("Bond Depository", async () => {
     it("should update IDs of markets", async () => {
         // create a second bond
         await depository.create(
-            dai.address,
+            quoteToken.address,
             [capacity, initialPrice, buffer],
             [false, true],
             [vesting, conclusion],
@@ -171,7 +152,7 @@ describe.only("Bond Depository", async () => {
     });
 
     it("should include ID in live markets for quote token", async () => {
-        [id] = await depository.liveMarketsFor(dai.address);
+        [id] = await depository.liveMarketsFor(quoteToken.address);
         expect(Number(id)).to.equal(bid);
     });
 
@@ -356,7 +337,7 @@ describe.only("Bond Depository", async () => {
     });
 
     it("should not redeem before vested", async () => {
-        let balance = await ohm.balanceOf(bob.address);
+        let balance = await baseToken.balanceOf(bob.address);
         let amount = "10000000000000000000000"; // 10,000
         await depository.connect(bob).deposit(
             bid,
@@ -366,7 +347,7 @@ describe.only("Bond Depository", async () => {
             carol.address
         );
         await depository.connect(bob).redeemAll(bob.address, true);
-        expect(await ohm.balanceOf(bob.address)).to.equal(balance);
+        expect(await baseToken.balanceOf(bob.address)).to.equal(balance);
     });
 
     it("should redeem after vested", async () => {
@@ -390,14 +371,14 @@ describe.only("Bond Depository", async () => {
         await network.provider.send("evm_increaseTime", [1000]);
         await depository.redeemAll(bob.address, true);
         
-        const bobBalance = Number(await gOHM.balanceOf(bob.address));
-        expect(bobBalance).to.greaterThanOrEqual(Number(await gOHM.balanceTo(expectedPayout)));
-        expect(bobBalance).to.lessThan(Number(await gOHM.balanceTo(expectedPayout * 1.0001)));
+        const bobBalance = Number(await baseToken.balanceOf(bob.address));
+        expect(bobBalance).to.greaterThanOrEqual(Number(await baseToken.balanceTo(expectedPayout)));
+        expect(bobBalance).to.lessThan(Number(await baseToken.balanceTo(expectedPayout * 1.0001)));
     });
 
     it("should give correct rewards to referrer and dao", async () => {
-        let daoBalance = await ohm.balanceOf(deployer.address);
-        let refBalance = await ohm.balanceOf(carol.address);
+        let daoBalance = await baseToken.balanceOf(deployer.address);
+        let refBalance = await baseToken.balanceOf(carol.address);
         let amount = "10000000000000000000000"; // 10,000
         [payout, expiry, index] = await depository.connect(bob).callStatic.deposit(
             bid,
@@ -414,20 +395,20 @@ describe.only("Bond Depository", async () => {
             carol.address
         );
 
-        // Mint ohm for depository to payout reward
-        await ohm.mint(depository.address, "1000000000000000000000");
+        // Mint baseToken for depository to payout reward
+        await baseToken.mint(depository.address, "1000000000000000000000");
 
         let daoExpected = Number(daoBalance) + Number(Number(payout) * daoReward / 1e4);
         await depository.getReward();
 
-        const frontendReward = Number(await ohm.balanceOf(deployer.address));
+        const frontendReward = Number(await baseToken.balanceOf(deployer.address));
         expect(frontendReward).to.be.greaterThan(Number(daoExpected));
         expect(frontendReward).to.be.lessThan(Number(daoExpected) * 1.0001);
 
         let refExpected = Number(refBalance) + Number(Number(payout) * refReward / 1e4);
         await depository.connect(carol).getReward();
 
-        const carolReward = Number(await ohm.balanceOf(carol.address));
+        const carolReward = Number(await baseToken.balanceOf(carol.address));
         expect(carolReward).to.be.greaterThan(Number(refExpected));
         expect(carolReward).to.be.lessThan(Number(refExpected) * 1.0001);
     });

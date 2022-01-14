@@ -17,17 +17,19 @@ async function main() {
   // await hre.run('compile');
 
   // Get Signer from Hardhat
-  const [owner, , ] = await ethers.getSigners();
+  const [owner, treasury, protocol] = await ethers.getSigners();
 
   // Deploy Parameters for BondDepository
-  const baseTokenAddr = '';
-  const treasuryAddr = owner.address;
+  const baseTokenAddr = '0x12345678901234567890abcdefabcd1234567890'; // Example address, change to deploy
 
   // Create the Factory and Deploy the Contract
   const BondDepo = await hre.ethers.getContractFactory("BondDepository");
   const bondDepo = await BondDepo.deploy(
-    baseTokenAddr, // IERC20Metadata _baseToken,
-    treasuryAddr, // address _treasury
+    baseTokenAddr, // IERC20 _baseToken,
+    treasury.address, // address _projectTreasury
+    owner.address, // address _depoOwner,    
+    protocol.address, // address _protocolTreasury,
+    100, // 1%, uint256 _protocolFee
   );
   await bondDepo.deployed();
 

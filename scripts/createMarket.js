@@ -30,11 +30,11 @@ async function main() {
     const quoteTokenAddr = '';  //  IERC20Metadata:  token used to deposit
     const marketValues = [ // uint256[3] memory _market
         hre.ethers.utils.parseUnits("1000", "ether"), // capacity (in base token or quote token) - example is 1000 * 10**18
-        hre.ethers.utils.parseUnits(), //initial price / 10 ** base decimals, - Need to research
-        hre.ethers.utils.parseUnits("10000", "wei") //debt buffer (3 decimals) - example is 10%
+        hre.ethers.utils.parseUnits("20", "ether"), //initial price / 10 ** base decimals
+        hre.ethers.utils.parseUnits("5000", "wei") //debt buffer (3 decimals) - example is 5%
     ];
     const marketBools = [  //   bool[2] memory _booleans
-        true,  // capacity in quote (true for capacity in quote, false for capacity in payout) 
+        false,  // capacity in quote (true for capacity in quote, false for capacity in payout) 
         true,  // fixed term (true for fixed term (# of blocks), false for fixed expiration (block to end on))
     ];
     const marketTerms = [  //   uint256[2] memory _terms

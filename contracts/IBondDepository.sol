@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0
 pragma solidity ^0.8.10;
 
-import "./IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 interface IBondDepository {
 
@@ -9,7 +9,7 @@ interface IBondDepository {
   struct Market {
     uint256 capacity; // capacity remaining
     IERC20 quoteToken; // token to accept as payment
-    bool capacityInQuote; // capacity limit is in payment token (true) or in OHM (false, default)
+    bool capacityInQuote; // capacity limit is in quote token (true) or in the base token (false, default)
     uint64 totalDebt; // total debt from market
     uint64 maxPayout; // max tokens in/out (determined by capacityInQuote false/true, respectively)
     uint64 sold; // base tokens out
@@ -22,7 +22,7 @@ interface IBondDepository {
     uint64 controlVariable; // scaling variable for price
     uint48 vesting; // length of time from deposit to maturity if fixed-term
     uint48 conclusion; // timestamp when market no longer offered (doubles as time when market matures if fixed-expiry)
-    uint64 maxDebt; // 9 decimal debt maximum in OHM
+    uint64 maxDebt; // Debt maximum in the base token decimals
   }
 
   // Additional info about market.
@@ -45,7 +45,7 @@ interface IBondDepository {
 
   // Info for market note
   struct Note {
-    uint256 payout; // RAIDER remaining to be paid
+    uint256 payout; // baseToken remaining to be paid
     uint48 created; // time market was created
     uint48 matured; // timestamp when market is matured
     uint48 redeemed; // time market was redeemed
@@ -60,7 +60,6 @@ interface IBondDepository {
    * @param _amount uint256
    * @param _maxPrice uint256
    * @param _user address
-   * @param _referral address
    * @return payout_ uint256
    * @return expiry_ uint256
    * @return index_ uint256
@@ -69,8 +68,7 @@ interface IBondDepository {
     uint256 _bid,
     uint256 _amount,
     uint256 _maxPrice,
-    address _user,
-    address _referral
+    address _user
   ) external returns (
     uint256 payout_, 
     uint256 expiry_,
@@ -97,11 +95,16 @@ interface IBondDepository {
 
   /* ========== NOTES FUNCTIONS ========== */
 
-  function redeem(address _user, uint256[] memory _indexes, bool _sendgOHM) external returns (uint256);
-  function redeemAll(address _user, bool _sendgOHM) external returns (uint256);
+  function redeem(address _user, uint256[] memory _indexes) external returns (uint256);
+  function redeemAll(address _user) external returns (uint256);
   function pushNote(address to, uint256 index) external;
   function pullNote(address from, uint256 index) external returns (uint256 newIndex_);
 
   function indexesFor(address _user) external view returns (uint256[] memory);
   function pendingFor(address _user, uint256 _index) external view returns (uint256 payout_, bool matured_);
+
+  /* ========== MANAGEMENT FUNCTIONS ========== */
+  function withdrawBaseToken(uint _amount) external;
+  function depositBaseToken(uint _amount) external;
+  function updateTreasury(address _treasury) external;
 }

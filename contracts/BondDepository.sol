@@ -1,11 +1,10 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0
 pragma solidity ^0.8.10;
 
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
-import "./interfaces/IERC20Metadata.sol";
-import "./interfaces/IBondDepository.sol";
+import "./IBondDepository.sol";
 
 /// @title Generalized Bond Depository (based on Olympus Bond Depository V2)
 /// @author Zeus, Indigo, with modifications by Oighty
@@ -13,7 +12,6 @@ import "./interfaces/IBondDepository.sol";
 
 contract BondDepository is IBondDepository, Ownable {
 /* ======== DEPENDENCIES ======== */
-
   using SafeERC20 for IERC20;
 
 /* ======== EVENTS ======== */
@@ -26,6 +24,8 @@ contract BondDepository is IBondDepository, Ownable {
 /* ======== STATE VARIABLES ======== */
 
   // Storage
+  //// General
+  address public treasury;
   //// Bonds/Markets
   Market[] public markets; // persistent market data
   Terms[] public terms; // deposit construction data
@@ -39,22 +39,45 @@ contract BondDepository is IBondDepository, Ownable {
   mapping(address => uint256[]) public marketsForQuote; // market IDs for quote token
 
   // Constants
-  address public immutable treasury;
-  IERC20Metadata internal immutable baseToken;
+  IERC20 internal immutable baseToken;
   uint256 public immutable baseSupply;
   uint256 public immutable baseDecimals; // Recommend the token have 18 or fewer decimals to avoid overflow reverts
+  address public immutable protocol;
+  uint256 public immutable protocolFee;
+  address internal constant ZERO_ADDRESS = 0x0000000000000000000000000000000000000000;
 
 /* ======== CONSTRUCTOR ======== */
 
+  /**
+   * @param _baseToken         Address of token that will be used to payout Notes, must conform to IERC20Metadata
+   * @param _projectTreasury   Address that will receive deposited funds
+   * @param _depoOwner         Address that will have initial administrative control over the Bond Depository
+   * @param _protocolTreasury  Address that protocol fees will be sent to
+   * @param _protocolFee       Percent of user payouts paid to protocol as a fee, expressed in hundredths of a percent (e.g. 100 = 1%), in addition to user payout
+   * @dev The constructor overrides the Ownable constructor and sets the owner to the provided address instead of sender to enable factory contract
+   */
   constructor(
-    IERC20Metadata _baseToken,
-    address _treasury
+    IERC20 _baseToken, 
+    address _projectTreasury,   
+    address _depoOwner,
+    address _protocolTreasury,
+    uint256 _protocolFee
   ) {
-    owner = msg.sender;
-    treasury = _treasury;
     baseToken = _baseToken;
-    baseSupply = baseToken.totalSupply();
-    baseDecimals = baseToken.decimals();
+    baseSupply = IERC20Metadata(address(baseToken)).totalSupply();
+    baseDecimals = IERC20Metadata(address(baseToken)).decimals();
+    
+    require(_projectTreasury != ZERO_ADDRESS, "Treasury cannot be zero address.");
+    treasury = _projectTreasury;
+
+    require(_depoOwner != ZERO_ADDRESS, "Owner cannot be zero address.");
+    _transferOwnership(_depoOwner);
+
+    require(_protocolTreasury != ZERO_ADDRESS, "Protocol cannot be zero address");
+    protocol = _protocolTreasury;
+
+    require(_protocolFee <= 10000);
+    protocolFee = _protocolFee;
   }
 
 /* ======== DEPOSIT ======== */
@@ -74,7 +97,7 @@ contract BondDepository is IBondDepository, Ownable {
     uint256 _amount,
     uint256 _maxPrice,
     address _user
-  ) external override returns (
+  ) external returns (
     uint256 payout_, 
     uint256 expiry_,
     uint256 index_
@@ -101,7 +124,7 @@ contract BondDepository is IBondDepository, Ownable {
      * where
      * payout = base token out
      * amount = quote tokens in
-     * price = quote tokens : ohm (i.e. 42069 DAI : OHM)
+     * price = quote tokens : baseToken (i.e. 42069 DAI : OHM)
      *
      * (10 ** (baseDecimals * 2)) = base decimals + price decimals (which are the same as base)
      */
@@ -290,18 +313,18 @@ contract BondDepository is IBondDepository, Ownable {
    * @return id_         ID of new bond market
    */
   function create(
-    IERC20Metadata _quoteToken,
+    IERC20 _quoteToken,
     uint256[3] memory _market,
     bool[2] memory _booleans,
     uint256[2] memory _terms,
     uint32[2] memory _intervals
-  ) external override onlyOwner returns (uint256 id_) {
+  ) external onlyOwner returns (uint256 id_) {
 
     // the length of the program, in seconds
     uint256 secondsToConclusion = _terms[1] - block.timestamp;
 
     // the decimal count of the quote token
-    uint256 decimals = _quoteToken.decimals();
+    uint256 decimals = IERC20Metadata(address(_quoteToken)).decimals();
 
     /* 
      * initial target debt is equal to capacity (this is the amount of debt
@@ -375,14 +398,14 @@ contract BondDepository is IBondDepository, Ownable {
 
     marketsForQuote[address(_quoteToken)].push(id_);
 
-    emit CreateMarket(id_, address(ohm), address(_quoteToken), _market[1]);
+    emit CreateMarket(id_, address(baseToken), address(_quoteToken), _market[1]);
   }
 
   /**
    * @notice             disable existing market
    * @param _id          ID of market to close
    */
-  function close(uint256 _id) external override onlyOwner {
+  function close(uint256 _id) external onlyOwner {
     terms[_id].conclusion = uint48(block.timestamp);
     markets[_id].capacity = 0;
     emit CloseMarket(_id);
@@ -417,7 +440,7 @@ contract BondDepository is IBondDepository, Ownable {
    * dt = change in time
    * l = length of program
    */
-  function marketPrice(uint256 _id) public view override returns (uint256) {
+  function marketPrice(uint256 _id) public view returns (uint256) {
     return 
       currentControlVariable(_id)
       * debtRatio(_id)
@@ -433,7 +456,7 @@ contract BondDepository is IBondDepository, Ownable {
    *
    * @dev (10 ** (baseDecimals * 2)) = base decimals + price decimals (which are the same as base)
    */
-  function payoutFor(uint256 _amount, uint256 _id) external view override returns (uint256) {
+  function payoutFor(uint256 _amount, uint256 _id) external view returns (uint256) {
     Metadata memory meta = metadata[_id];
     return 
       _amount
@@ -448,7 +471,7 @@ contract BondDepository is IBondDepository, Ownable {
    * @param _id          ID of market
    * @return             debt ratio for market in quote decimals
    */
-  function debtRatio(uint256 _id) public view override returns (uint256) {
+  function debtRatio(uint256 _id) public view returns (uint256) {
     return 
       currentDebt(_id)
       * (10 ** metadata[_id].quoteDecimals)
@@ -461,7 +484,7 @@ contract BondDepository is IBondDepository, Ownable {
    * @param _id          ID of market
    * @return             current debt for market in base token decimals
    */
-  function currentDebt(uint256 _id) public view override returns (uint256) {
+  function currentDebt(uint256 _id) public view returns (uint256) {
     return markets[_id].totalDebt - debtDecay(_id);
   }
 
@@ -470,7 +493,7 @@ contract BondDepository is IBondDepository, Ownable {
    * @param _id          ID of market
    * @return             amount of debt to decay
    */
-  function debtDecay(uint256 _id) public view override returns (uint64) {
+  function debtDecay(uint256 _id) public view returns (uint64) {
     Metadata memory meta = metadata[_id];
 
     uint256 secondsSince = block.timestamp - meta.lastDecay;
@@ -493,14 +516,14 @@ contract BondDepository is IBondDepository, Ownable {
    * @notice             is a given market accepting deposits
    * @param _id          ID of market
    */
-  function isLive(uint256 _id) public view override returns (bool) {
+  function isLive(uint256 _id) public view returns (bool) {
     return (markets[_id].capacity != 0 && terms[_id].conclusion > block.timestamp);
   }
 
   /**
    * @notice returns an array of all active market IDs
    */
-  function liveMarkets() external view override returns (uint256[] memory) {
+  function liveMarkets() external view returns (uint256[] memory) {
     uint256 num;
     for (uint256 i = 0; i < markets.length; i++) {
       if (isLive(i)) num++;
@@ -521,7 +544,7 @@ contract BondDepository is IBondDepository, Ownable {
    * @notice             returns an array of all active market IDs for a given quote token
    * @param _token       quote token to check for
    */
-  function liveMarketsFor(address _token) external view override returns (uint256[] memory) {
+  function liveMarketsFor(address _token) external view returns (uint256[] memory) {
     uint256[] memory mkts = marketsForQuote[_token];
     uint256 num;
 
@@ -589,7 +612,7 @@ contract BondDepository is IBondDepository, Ownable {
       : info.change;
   }
 
-/* ========== NOTES FUNCTIONALITY ========== */
+/* ========== NOTES FUNCTIONS ========== */
 
 /* ========== ADD ========== */
 
@@ -620,6 +643,9 @@ contract BondDepository is IBondDepository, Ownable {
         marketID: _marketID
       })
     );
+
+    // send the protocol its fee based on the payout
+    baseToken.safeTransfer(protocol, _payout * protocolFee / 1e4);
   }
 
 /* ========== REDEEM ========== */
@@ -630,7 +656,7 @@ contract BondDepository is IBondDepository, Ownable {
    * @param _indexes     the note indexes to redeem
    * @return payout_     sum of payout sent, in baseToken
    */
-  function redeem(address _user, uint256[] memory _indexes) public override returns (uint256 payout_) {
+  function redeem(address _user, uint256[] memory _indexes) public returns (uint256 payout_) {
     uint48 time = uint48(block.timestamp);
 
     for (uint256 i = 0; i < _indexes.length; i++) {
@@ -651,7 +677,7 @@ contract BondDepository is IBondDepository, Ownable {
    * @param _user        user to redeem all notes for
    * @return             sum of payout sent, in baseToken
    */ 
-  function redeemAll(address _user) external override returns (uint256) {
+  function redeemAll(address _user) external returns (uint256) {
     return redeem(_user, indexesFor(_user));
   }
 
@@ -662,7 +688,7 @@ contract BondDepository is IBondDepository, Ownable {
    * @param _to          address to approve note transfer for
    * @param _index       index of note to approve transfer for
    */ 
-  function pushNote(address _to, uint256 _index) external override {
+  function pushNote(address _to, uint256 _index) external {
     require(notes[msg.sender][_index].created != 0, "Depository: note not found");
     noteTransfers[msg.sender][_index] = _to;
   }
@@ -672,7 +698,7 @@ contract BondDepository is IBondDepository, Ownable {
    * @param _from        the address that approved the note transfer
    * @param _index       the index of the note to transfer (in the sender's array)
    */ 
-  function pullNote(address _from, uint256 _index) external override returns (uint256 newIndex_) {
+  function pullNote(address _from, uint256 _index) external returns (uint256 newIndex_) {
     require(noteTransfers[_from][_index] == msg.sender, "Depository: transfer not found");
     require(notes[_from][_index].redeemed == 0, "Depository: note redeemed");
 
@@ -691,7 +717,7 @@ contract BondDepository is IBondDepository, Ownable {
    * @param _user        the user to query notes for
    * @return             the pending notes for the user
    */
-  function indexesFor(address _user) public view override returns (uint256[] memory) {
+  function indexesFor(address _user) public view returns (uint256[] memory) {
     Note[] memory info = notes[_user];
 
     uint256 length;
@@ -719,19 +745,19 @@ contract BondDepository is IBondDepository, Ownable {
    * @return payout_     the payout due, in baseToken
    * @return matured_    if the payout can be redeemed
    */
-  function pendingFor(address _user, uint256 _index) public view override returns (uint256 payout_, bool matured_) {
+  function pendingFor(address _user, uint256 _index) public view returns (uint256 payout_, bool matured_) {
     Note memory note = notes[_user][_index];
 
     payout_ = note.payout;
     matured_ = note.redeemed == 0 && note.matured <= block.timestamp && note.payout != 0;
   }
 
-/* ========== MANAGEMENT ========== */
+/* ========== MANAGEMENT FUNCTIONS ========== */
   /**
    * @notice             withdraw an amount of the payout token from contract (only owner)
    * @param _amount      the amount of payout token to withdraw
    */
-  function withdrawPayoutToken(uint _amount) external onlyOwner {
+  function withdrawBaseToken(uint _amount) external onlyOwner {
     baseToken.safeTransfer(msg.sender, _amount);
   }
   
@@ -739,7 +765,7 @@ contract BondDepository is IBondDepository, Ownable {
    * @notice             deposit an amount of the payout token from contract (only owner)
    * @param _amount      the amount of payout token to deposit
    */
-  function depositPayoutToken(uint _amount) external onlyOwner {
+  function depositBaseToken(uint _amount) external onlyOwner {
     baseToken.safeTransferFrom(msg.sender, address(this), _amount);
   }
 
@@ -749,7 +775,7 @@ contract BondDepository is IBondDepository, Ownable {
    */
   // if treasury address changes on authority, update it
   function updateTreasury(address _treasury) external onlyOwner {
-    require(_treasury != 0x00, "Cannot be the zero address.")
+    require(_treasury != ZERO_ADDRESS, "Cannot be the zero address.");
     treasury = _treasury;
   }
 

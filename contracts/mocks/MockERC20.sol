@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 pragma solidity >=0.8.0;
 
-import {ERC20} from "openzeppelin/contracts/token/ERC20.sol";
+import {ERC20} from "@rari-capital/solmate/src/tokens/ERC20.sol";
 
 contract MockERC20 is ERC20 {
     constructor(
