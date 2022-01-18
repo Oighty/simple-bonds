@@ -5,19 +5,28 @@ require("@nomiclabs/hardhat-waffle");
 require("@nomiclabs/hardhat-etherscan");
 
 module.exports = {
-  solidity: "0.8.10",
+  solidity: {
+    version: "0.8.10",
+    settings: {
+      outputSelection: {
+        "*": {
+          "*": ["storageLayout"]
+        }
+      }
+    }
+  },
   networks: {
     hardhat: {
       chainId: 1337,
-      forking: {
-        url: process.env.POLYGON_ARCHIVE_URL,
-        blockNumber: 21996800,
-      },
-      accounts: [
-        {privateKey: process.env.PRIVATE_KEY_1, balance: (100 * (10 ** 18)).toString()},
-        {privateKey: process.env.PRIVATE_KEY_2, balance: (100 * (10 ** 18)).toString()},
-        {privateKey: process.env.PRIVATE_KEY_3, balance: (100 * (10 ** 18)).toString()},
-      ],
+      // forking: {
+      //   url: process.env.POLYGON_ARCHIVE_URL,
+      //   blockNumber: 21996800,
+      // },
+      // accounts: [
+      //   {privateKey: process.env.PRIVATE_KEY_1, balance: (100 * (10 ** 18)).toString()},
+      //   {privateKey: process.env.PRIVATE_KEY_2, balance: (100 * (10 ** 18)).toString()},
+      //   {privateKey: process.env.PRIVATE_KEY_3, balance: (100 * (10 ** 18)).toString()},
+      // ],
       initialBaseFeePerGas: 0, // workaround from https://github.com/sc-forks/solidity-coverage/issues/652#issuecomment-896330136 . Remove when that issue is closed.
     },
     // mumbai: {
