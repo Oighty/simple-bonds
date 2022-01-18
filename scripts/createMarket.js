@@ -30,7 +30,7 @@ async function main() {
     const quoteTokenAddr = '';  //  IERC20Metadata:  token used to deposit
     const marketValues = [ // uint256[3] memory _market
         hre.ethers.utils.parseUnits("1000", "ether"), // capacity (in base token or quote token) - example is 1000 * 10**18
-        hre.ethers.utils.parseUnits("20", "ether"), //initial price / 10 ** base decimals
+        hre.ethers.utils.parseUnits("20", "ether"), // initial price (number of quote tokens per base token, in base decimals)
         hre.ethers.utils.parseUnits("5000", "wei") //debt buffer (3 decimals) - example is 5%
     ];
     const marketBools = [  //   bool[2] memory _booleans
@@ -43,7 +43,7 @@ async function main() {
     ];
     const marketIntervals = [ //   uint32[2] memory _intervals - Need to research how to set these better
         3600, // deposit interval (seconds) (example is 1 hour which is 3600 seconds)
-        3600, // tune interval (seconds) (example is 1 hour which is 3600 seconds) 
+        900, // tune interval (seconds) (example is 15 minutes which is 900 seconds) 
     ];
             
 

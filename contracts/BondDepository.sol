@@ -19,7 +19,7 @@ contract BondDepository is IBondDepository, Ownable {
   event CreateMarket(uint256 indexed id, address indexed baseToken, address indexed quoteToken, uint256 initialPrice);
   event CloseMarket(uint256 indexed id);
   event Bond(uint256 indexed id, uint256 amount, uint256 price);
-  event Tuned(uint256 indexed id, uint64 oldControlVariable, uint64 newControlVariable);
+  event Tuned(uint256 indexed id, uint256 oldControlVariable, uint256 newControlVariable);
 
 /* ======== STATE VARIABLES ======== */
 
@@ -97,7 +97,7 @@ contract BondDepository is IBondDepository, Ownable {
     uint256 _amount,
     uint256 _maxPrice,
     address _user
-  ) external returns (
+  ) external override returns (
     uint256 payout_, 
     uint256 expiry_,
     uint256 index_
@@ -169,10 +169,10 @@ contract BondDepository is IBondDepository, Ownable {
     // markets keep track of how many quote tokens have been
     // purchased, and how much OHM has been sold
     market.purchased += _amount;
-    market.sold += uint64(payout_);
+    market.sold += payout_;
 
     // incrementing total debt raises the price of the next bond
-    market.totalDebt += uint64(payout_);
+    market.totalDebt += payout_;
 
     emit Bond(_id, _amount, price);
 
@@ -237,7 +237,7 @@ contract BondDepository is IBondDepository, Ownable {
     if (adjustments[_id].active) {
       Adjustment storage adjustment = adjustments[_id];
 
-      (uint64 adjustBy, uint48 secondsSince, bool stillActive) = _controlDecay(_id);
+      (uint256 adjustBy, uint48 secondsSince, bool stillActive) = _controlDecay(_id);
       terms[_id].controlVariable -= adjustBy;
 
       if (stillActive) {
@@ -278,13 +278,13 @@ contract BondDepository is IBondDepository, Ownable {
        * i.e. market has 10 days remaining. deposit interval is 1 day. capacity
        * is 10,000 OHM. max payout would be 1,000 OHM (10,000 * 1 / 10).
        */  
-      markets[_id].maxPayout = uint64(capacity * meta.depositInterval / timeRemaining);
+      markets[_id].maxPayout = capacity * meta.depositInterval / timeRemaining;
 
       // calculate the ideal total debt to satisfy capacity in the remaining time
       uint256 targetDebt = capacity * meta.length / timeRemaining;
 
       // derive a new control variable from the target debt and current supply
-      uint64 newControlVariable = uint64(price * baseSupply / targetDebt);
+      uint256 newControlVariable = price * baseSupply / targetDebt;
 
       emit Tuned(_id, terms[_id].controlVariable, newControlVariable);
 
@@ -293,7 +293,7 @@ contract BondDepository is IBondDepository, Ownable {
       } else {
         // if decrease, control variable change will be carried out over the tune interval
         // this is because price will be lowered
-        uint64 change = terms[_id].controlVariable - newControlVariable;
+        uint256 change = terms[_id].controlVariable - newControlVariable;
         adjustments[_id] = Adjustment(change, _time, meta.tuneInterval, true);
       }
       metadata[_id].lastTune = _time;
@@ -306,7 +306,7 @@ contract BondDepository is IBondDepository, Ownable {
    * @notice             creates a new market type
    * @dev                current price should be in base decimals.
    * @param _quoteToken  token used to deposit
-   * @param _market      [capacity (in base token or quote token), initial price / 10 ** base decimals, debt buffer (3 decimals)]
+   * @param _market      [capacity (in base token or quote token), initial price (quote tokens per base token, in base decimals), debt buffer (3 decimals)]
    * @param _booleans    [capacity in quote, fixed term]
    * @param _terms       [vesting length (if fixed term) or vested timestamp, conclusion timestamp]
    * @param _intervals   [deposit interval (seconds), tune interval (seconds)]
@@ -318,7 +318,7 @@ contract BondDepository is IBondDepository, Ownable {
     bool[2] memory _booleans,
     uint256[2] memory _terms,
     uint32[2] memory _intervals
-  ) external onlyOwner returns (uint256 id_) {
+  ) external override onlyOwner returns (uint256 id_) {
 
     // the length of the program, in seconds
     uint256 secondsToConclusion = _terms[1] - block.timestamp;
@@ -333,17 +333,16 @@ contract BondDepository is IBondDepository, Ownable {
      *
      * (10 ** (baseDecimals * 2)) = base decimals + price decimals (which are the same as base)
      */
-    uint64 targetDebt = uint64(_booleans[0]
+    uint256 targetDebt = _booleans[0]
       ? (_market[0] * (10 ** (baseDecimals * 2)) / _market[1]) / 10 ** decimals
-      : _market[0]
-    );
+      : _market[0];
 
     /*
      * max payout is the amount of capacity that should be utilized in a deposit
      * interval. for example, if capacity is 1,000 OHM, there are 10 days to conclusion, 
      * and the preferred deposit interval is 1 day, max payout would be 100 OHM.
      */
-    uint64 maxPayout = uint64(targetDebt * _intervals[0] / secondsToConclusion);
+    uint256 maxPayout = targetDebt * _intervals[0] / secondsToConclusion;
 
     /*
      * max debt serves as a circuit breaker for the market. let's say the quote
@@ -381,10 +380,10 @@ contract BondDepository is IBondDepository, Ownable {
 
     terms.push(Terms({
       fixedTerm: _booleans[1], 
-      controlVariable: uint64(controlVariable),
+      controlVariable: controlVariable,
       vesting: uint48(_terms[0]), 
       conclusion: uint48(_terms[1]), 
-      maxDebt: uint64(maxDebt) 
+      maxDebt: maxDebt
     }));
 
     metadata.push(Metadata({
@@ -405,7 +404,7 @@ contract BondDepository is IBondDepository, Ownable {
    * @notice             disable existing market
    * @param _id          ID of market to close
    */
-  function close(uint256 _id) external onlyOwner {
+  function close(uint256 _id) external override onlyOwner {
     terms[_id].conclusion = uint48(block.timestamp);
     markets[_id].capacity = 0;
     emit CloseMarket(_id);
@@ -440,7 +439,7 @@ contract BondDepository is IBondDepository, Ownable {
    * dt = change in time
    * l = length of program
    */
-  function marketPrice(uint256 _id) public view returns (uint256) {
+  function marketPrice(uint256 _id) public view override returns (uint256) {
     return 
       currentControlVariable(_id)
       * debtRatio(_id)
@@ -456,7 +455,7 @@ contract BondDepository is IBondDepository, Ownable {
    *
    * @dev (10 ** (baseDecimals * 2)) = base decimals + price decimals (which are the same as base)
    */
-  function payoutFor(uint256 _amount, uint256 _id) external view returns (uint256) {
+  function payoutFor(uint256 _amount, uint256 _id) external view override returns (uint256) {
     Metadata memory meta = metadata[_id];
     return 
       _amount
@@ -471,7 +470,7 @@ contract BondDepository is IBondDepository, Ownable {
    * @param _id          ID of market
    * @return             debt ratio for market in quote decimals
    */
-  function debtRatio(uint256 _id) public view returns (uint256) {
+  function debtRatio(uint256 _id) public view override returns (uint256) {
     return 
       currentDebt(_id)
       * (10 ** metadata[_id].quoteDecimals)
@@ -484,7 +483,7 @@ contract BondDepository is IBondDepository, Ownable {
    * @param _id          ID of market
    * @return             current debt for market in base token decimals
    */
-  function currentDebt(uint256 _id) public view returns (uint256) {
+  function currentDebt(uint256 _id) public view override returns (uint256) {
     return markets[_id].totalDebt - debtDecay(_id);
   }
 
@@ -493,12 +492,12 @@ contract BondDepository is IBondDepository, Ownable {
    * @param _id          ID of market
    * @return             amount of debt to decay
    */
-  function debtDecay(uint256 _id) public view returns (uint64) {
+  function debtDecay(uint256 _id) public view override returns (uint256) {
     Metadata memory meta = metadata[_id];
 
     uint256 secondsSince = block.timestamp - meta.lastDecay;
 
-    return uint64(markets[_id].totalDebt * secondsSince / meta.length);
+    return markets[_id].totalDebt * secondsSince / meta.length;
   }
 
   /**
@@ -507,8 +506,8 @@ contract BondDepository is IBondDepository, Ownable {
    * @param _id          ID of market
    * @return             control variable for market in base token decimals
    */
-  function currentControlVariable(uint256 _id) public view returns (uint256) {
-    (uint64 decay,,) = _controlDecay(_id);
+  function currentControlVariable(uint256 _id) public view override returns (uint256) {
+    (uint256 decay,,) = _controlDecay(_id);
     return terms[_id].controlVariable - decay;
   }
 
@@ -516,14 +515,14 @@ contract BondDepository is IBondDepository, Ownable {
    * @notice             is a given market accepting deposits
    * @param _id          ID of market
    */
-  function isLive(uint256 _id) public view returns (bool) {
+  function isLive(uint256 _id) public view override returns (bool) {
     return (markets[_id].capacity != 0 && terms[_id].conclusion > block.timestamp);
   }
 
   /**
    * @notice returns an array of all active market IDs
    */
-  function liveMarkets() external view returns (uint256[] memory) {
+  function liveMarkets() external view override returns (uint256[] memory) {
     uint256 num;
     for (uint256 i = 0; i < markets.length; i++) {
       if (isLive(i)) num++;
@@ -544,7 +543,7 @@ contract BondDepository is IBondDepository, Ownable {
    * @notice             returns an array of all active market IDs for a given quote token
    * @param _token       quote token to check for
    */
-  function liveMarketsFor(address _token) external view returns (uint256[] memory) {
+  function liveMarketsFor(address _token) external view override returns (uint256[] memory) {
     uint256[] memory mkts = marketsForQuote[_token];
     uint256 num;
 
@@ -600,7 +599,7 @@ contract BondDepository is IBondDepository, Ownable {
    * @return secondsSince_    seconds since last change in control variable
    * @return active_          whether or not change remains active
    */ 
-  function _controlDecay(uint256 _id) internal view returns (uint64 decay_, uint48 secondsSince_, bool active_) {
+  function _controlDecay(uint256 _id) internal view returns (uint256 decay_, uint48 secondsSince_, bool active_) {
     Adjustment memory info = adjustments[_id];
     if (!info.active) return (0, 0, false);
 
@@ -656,7 +655,7 @@ contract BondDepository is IBondDepository, Ownable {
    * @param _indexes     the note indexes to redeem
    * @return payout_     sum of payout sent, in baseToken
    */
-  function redeem(address _user, uint256[] memory _indexes) public returns (uint256 payout_) {
+  function redeem(address _user, uint256[] memory _indexes) public override returns (uint256 payout_) {
     uint48 time = uint48(block.timestamp);
 
     for (uint256 i = 0; i < _indexes.length; i++) {
@@ -677,7 +676,7 @@ contract BondDepository is IBondDepository, Ownable {
    * @param _user        user to redeem all notes for
    * @return             sum of payout sent, in baseToken
    */ 
-  function redeemAll(address _user) external returns (uint256) {
+  function redeemAll(address _user) external override returns (uint256) {
     return redeem(_user, indexesFor(_user));
   }
 
@@ -688,7 +687,7 @@ contract BondDepository is IBondDepository, Ownable {
    * @param _to          address to approve note transfer for
    * @param _index       index of note to approve transfer for
    */ 
-  function pushNote(address _to, uint256 _index) external {
+  function pushNote(address _to, uint256 _index) external override {
     require(notes[msg.sender][_index].created != 0, "Depository: note not found");
     noteTransfers[msg.sender][_index] = _to;
   }
@@ -698,7 +697,7 @@ contract BondDepository is IBondDepository, Ownable {
    * @param _from        the address that approved the note transfer
    * @param _index       the index of the note to transfer (in the sender's array)
    */ 
-  function pullNote(address _from, uint256 _index) external returns (uint256 newIndex_) {
+  function pullNote(address _from, uint256 _index) external override returns (uint256 newIndex_) {
     require(noteTransfers[_from][_index] == msg.sender, "Depository: transfer not found");
     require(notes[_from][_index].redeemed == 0, "Depository: note redeemed");
 
@@ -717,7 +716,7 @@ contract BondDepository is IBondDepository, Ownable {
    * @param _user        the user to query notes for
    * @return             the pending notes for the user
    */
-  function indexesFor(address _user) public view returns (uint256[] memory) {
+  function indexesFor(address _user) public view override returns (uint256[] memory) {
     Note[] memory info = notes[_user];
 
     uint256 length;
@@ -745,7 +744,7 @@ contract BondDepository is IBondDepository, Ownable {
    * @return payout_     the payout due, in baseToken
    * @return matured_    if the payout can be redeemed
    */
-  function pendingFor(address _user, uint256 _index) public view returns (uint256 payout_, bool matured_) {
+  function pendingFor(address _user, uint256 _index) public view override returns (uint256 payout_, bool matured_) {
     Note memory note = notes[_user][_index];
 
     payout_ = note.payout;
@@ -757,7 +756,7 @@ contract BondDepository is IBondDepository, Ownable {
    * @notice             withdraw an amount of the payout token from contract (only owner)
    * @param _amount      the amount of payout token to withdraw
    */
-  function withdrawBaseToken(uint _amount) external onlyOwner {
+  function withdrawBaseToken(uint _amount) external override onlyOwner {
     baseToken.safeTransfer(msg.sender, _amount);
   }
   
@@ -765,7 +764,7 @@ contract BondDepository is IBondDepository, Ownable {
    * @notice             deposit an amount of the payout token from contract (only owner)
    * @param _amount      the amount of payout token to deposit
    */
-  function depositBaseToken(uint _amount) external onlyOwner {
+  function depositBaseToken(uint _amount) external override onlyOwner {
     baseToken.safeTransferFrom(msg.sender, address(this), _amount);
   }
 
@@ -774,7 +773,7 @@ contract BondDepository is IBondDepository, Ownable {
    * @param _treasury    the new address for the treasury
    */
   // if treasury address changes on authority, update it
-  function updateTreasury(address _treasury) external onlyOwner {
+  function updateTreasury(address _treasury) external override onlyOwner {
     require(_treasury != ZERO_ADDRESS, "Cannot be the zero address.");
     treasury = _treasury;
   }
